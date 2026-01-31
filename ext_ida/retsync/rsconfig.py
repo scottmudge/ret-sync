@@ -168,7 +168,7 @@ def rs_log(s, lvl=logging.INFO):
 
 
 def rs_debug(s):
-    rs_log(s, logging.DEBUG)
+    rs_log(s, logging.INFO)
 
 
 def rs_encode(buffer_str):

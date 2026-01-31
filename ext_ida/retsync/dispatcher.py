@@ -93,8 +93,20 @@ class DispatcherSrv():
             'sync_mode': self.req_sync_mode,
             'cmd': self.req_cmd,
             'bc': self.req_bc,
-            'kill': self.req_kill
+            'kill': self.req_kill,
+            'rva': self.req_rva
         }
+        
+    def req_rva(self, s, hash):
+        """Forward RVA message to debugger client"""
+        # self.broadcast("req_rva: %s" % hash)
+        msg = "[sync]%s\n" % json.dumps(hash)
+        if not self.current_dbg:
+            return
+        try:
+            self.current_dbg.client_sock.sendall(rs_encode(msg))
+        except socket.error:
+            pass
 
     def is_port_available(self, host, port):
         try:

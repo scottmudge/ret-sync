@@ -27,6 +27,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <strsafe.h>
 #include "tunnel.h"
 
+#include "json.hpp"
+
 
 // Default host value is locahost
 static const CHAR *g_DefaultHost = "127.0.0.1";
@@ -239,7 +241,6 @@ PollCmd()
 
 	hRes = TunnelPoll(&NbBytesRecvd, &msg);
 
-	// TODO -- Remove after debugging
 	if (FAILED(hRes)) {
 		// Only print once a second
 		static DWORD lastPrint = 0;
@@ -268,40 +269,54 @@ PollCmd()
 			_plugin_logprintf("[sync] received command : %s\n", msg);
 #endif
 
-			// Check if this is a JSON sync message (for HyperSync RVA)
+			// Check if this is a JSON sync message
 			if (strncmp(msg, "[sync]", 6) == 0) {
-				// Parse JSON message for HyperSync RVA
 				const char* json_start = msg + 6; // Skip "[sync]" prefix
 				
-				// Simple JSON parsing for RVA message
-				// Format: {"type":"rva","modname":"...","base":...,"rva":...}
-				if (strstr(json_start, "\"type\":\"rva\"")) {
-					// Extract module name
-					char modName[MAX_MODULE_SIZE] = {0};
-					const char* modname_start = strstr(json_start, "\"modname\":\"");
-					if (modname_start) {
-						modname_start += 11; // Skip "modname":"
-						const char* modname_end = strchr(modname_start, '"');
-						if (modname_end) {
-							size_t len = modname_end - modname_start;
-							if (len < MAX_MODULE_SIZE) {
-								strncpy_s(modName, MAX_MODULE_SIZE, modname_start, len);
+				try {
+					// Parse JSON
+					nlohmann::json j = nlohmann::json::parse(json_start);
+					
+					// Check if this is an RVA message
+					if (j.contains("type") && j["type"] == "rva") {
+						// Check if message is from IDA Pro (ignore our own messages)
+						std::string source_id = j.value("id", "");
+						if (source_id == "idapro") {
+							// Extract fields
+							std::string modName = j.value("modname", "");
+							ULONG64 base = j.value("base", 0ULL);
+							ULONG64 rva = j.value("rva", 0ULL);
+							
+							// Validate and handle
+							if (!modName.empty() && rva != 0) {
+								_plugin_logprintf("[sync] HyperSync RVA: %s+0x%llx (base: 0x%llx)\n", 
+									modName.c_str(), rva, base);
+								
+								// Convert std::string to char array for handler
+								char modNameBuf[MAX_MODULE_SIZE] = {0};
+								strncpy_s(modNameBuf, MAX_MODULE_SIZE, modName.c_str(), _TRUNCATE);
+								
+								HandleRemoteRVA(modNameBuf, rva);
+							}
+							else {
+								_plugin_logprintf("[sync] Invalid RVA message: missing modname or rva\n");
 							}
 						}
+						else {
+							_plugin_logprintf("[sync] Ignoring RVA from source: %s\n", source_id.c_str());
+						}
 					}
-					
-					// Extract RVA
-					ULONG64 rva = 0;
-					const char* rva_start = strstr(json_start, "\"rva\":");
-					if (rva_start) {
-						rva_start += 6; // Skip "rva":
-						rva = _strtoui64(rva_start, NULL, 10);
+					else {
+						_plugin_logprintf("[sync] Unknown JSON message type: %s\n", 
+							j.value("type", "unknown").c_str());
 					}
-					
-					// Call handler if we got valid data
-					if (modName[0] != 0 && rva != 0) {
-						HandleRemoteRVA(modName, rva);
-					}
+				}
+				catch (nlohmann::json::parse_error& e) {
+					_plugin_logprintf("[sync] JSON parse error: %s\n", e.what());
+					_plugin_logprintf("[sync] Invalid JSON: %s\n", json_start);
+				}
+				catch (nlohmann::json::exception& e) {
+					_plugin_logprintf("[sync] JSON error: %s\n", e.what());
 				}
 			}
 			else {
@@ -512,6 +527,13 @@ HRESULT sync(PSTR Args)
 	{
 		_plugin_logputs("[sync] probe failed, is IDA/Ghidra plugin listening?\n");
 		goto Exit;
+	}
+
+	if (g_HyperSyncEnabled) {
+		hypersync();
+	}
+	else {
+		hypersyncoff();
 	}
 
 	_plugin_logprintf("[sync] sync is now enabled with host %s\n", g_DefaultHost);
@@ -815,7 +837,7 @@ HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
 #endif
 
 	// Send relative address to IDA
-	hRes = TunnelSend("[sync]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%llu,\"rva\":%llu}\n", 
+	hRes = TunnelSend("[sync]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%llu,\"rva\":%llu,\"id\":\"x64dbg\"}\n", 
 		modName, (ULONG64)modBase, (ULONG64)(rva));
 
 	return hRes;

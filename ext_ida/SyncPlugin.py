@@ -314,7 +314,7 @@ class RequestHandler(object):
 
         if length == 4:
             prev_value = idc.get_wide_dword(addr)
-            if not ida_bytes.create_data(ea, FF_DWORD, 4, ida_idaapi.BADADDR):
+            if not ida_bytes.create_data(addr, ida_bytes.FF_DWORD, 4, ida_idaapi.BADADDR):
                 rs_log('[x] ida_bytes.create_data FF_DWORD failed')
             if not ida_bytes.patch_dword(addr, value):
                 rs_log('[x] patch_dword failed')
@@ -323,7 +323,7 @@ class RequestHandler(object):
 
         elif length == 8:
             prev_value = idc.get_qword(addr)
-            if not ida_bytes.create_data(addr, FF_QWORD, 8, ida_idaapi.BADADDR):
+            if not ida_bytes.create_data(addr, ida_bytes.FF_QWORD, 8, ida_idaapi.BADADDR):
                 rs_log('[x] ida_bytes.create_data FF_QWORD failed')
             if not ida_bytes.patch_qword(addr, value):
                 rs_log('[x] patch_qword failed')
@@ -794,6 +794,10 @@ class RequestHandler(object):
         modname = hash.get('modname')
         base = hash.get('base')
         rva = hash.get('rva')
+        _id = hash.get('id')
+        
+        if _id is not None and _id == "idapro":
+            return
         
         if not all([modname, base is not None, rva is not None]):
             rs_log("invalid RVA message format")
@@ -813,7 +817,7 @@ class RequestHandler(object):
             
         # Mark this as a remote change to prevent echo
         if self.cursor_hook:
-            self.cursor_hook.set_remote_change()
+            self.cursor_hook.set_remote_change(ea)
             
         # Jump to the address in IDA
         rs_debug("[HyperSync] Jumping to 0x%x (from RVA 0x%x)" % (ea, rva))
@@ -832,7 +836,7 @@ class RequestHandler(object):
         if not self.broker_sock:
             return
             
-        notice = "[sync]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%d,\"rva\":%d}\n" % (modname, base, rva)
+        notice = "[notice]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%d,\"rva\":%d,\"id\":\"idapro\"}\n" % (modname, base, rva)
         
         try:
             self.broker_sock.sendall(rs_encode(notice))
@@ -852,7 +856,6 @@ class RequestHandler(object):
 
         try:
             self.broker_sock.sendall(rs_encode(notice))
-            rs_debug("sent notice: %s" % notice)
         except socket.error:
             None
 
@@ -860,7 +863,6 @@ class RequestHandler(object):
         # Unhook cursor tracking
         if self.cursor_hook:
             self.cursor_hook.unhook()
-            del self.cursor_hook
             self.cursor_hook = None
             
         if self.broker_sock:
@@ -912,190 +914,65 @@ class RequestHandler(object):
         }
         self.prev_req = ""  # used as a cache if json is not completely received
 
-
-class CursorHook(ida_kernwin.View_Hooks, ida_kernwin.action_handler_t):
+# , ida_kernwin.View_Hooks
+class CursorHook(ida_kernwin.UI_Hooks):
     """
-    Enhanced hook to track cursor position changes in IDA Pro.
-    Uses multiple methods for immediate response and reliable tracking.
+    Hook to track cursor position changes in IDA Pro.
+    Used for HyperSync mode to synchronize selected lines with debugger.
     """
-    
-    class ScreenEAHook(ida_kernwin.UI_Hooks):
-        def __init__(self, handler):
-            ida_kernwin.UI_Hooks.__init__(self)
-            self.handler = handler
-            
-        def screen_ea_changed(self, ea, prev_ea):
-            rs_debug("screen ea changed from 0x%x to 0x%x" % (prev_ea, ea))
     
     def __init__(self, request_handler):
-        # Initialize both base classes
-        ida_kernwin.View_Hooks.__init__(self)
-        ida_kernwin.action_handler_t.__init__(self)
-        
-        self.screen_hook = CursorHook.ScreenEAHook(self)
-        self.screen_hook.hook()
+        ida_kernwin.UI_Hooks.__init__(self)
         self.rh: RequestHandler = request_handler
         self.prev_ea = None
         self.hypersync_enabled = False
         self.remote_change = False
-        self.timer = None
-        self.timer_interval = 200  # Check every 200ms (reduced from 100ms since we have event-based tracking too)
-        self.action_registered = False
+        self.last_remote_ea = None
         self.lock = threading.Lock()
-        
-    def screen_ea_changed(self, ea, prev_ea):
-        rs_debug("screen ea changed from 0x%x to 0x%x" % (prev_ea, ea))
-        
-    def hook(self):
-        """Start all tracking mechanisms"""
-        # Hook view events for click detection
-        with self.lock:
-            ida_kernwin.View_Hooks.hook(self)
-            rs_debug("CursorHook View_Hooks hooked")
-            
-            # Register timer for periodic checks
-            if not self.timer:
-                self.timer = ida_kernwin.register_timer(self.timer_interval, self._timer_callback)
-                if self.timer:
-                    rs_debug("CursorHook timer registered")
-                else:
-                    rs_log("Failed to register CursorHook timer")
-            
-            # Register invisible action to catch keyboard navigation
-            self._register_tracking_action()
-                
-    def unhook(self):
-        """Stop all tracking mechanisms"""
-        with self.lock:
-            # Unhook view events
-            ida_kernwin.View_Hooks.unhook(self)
-            rs_debug("CursorHook View_Hooks unhooked")
-            
-            # Stop timer
-            if self.timer:
-                ida_kernwin.unregister_timer(self.timer)
-                self.timer = None
-                rs_debug("CursorHook timer unregistered")
-            
-            # Unregister action
-            self._unregister_tracking_action()
+        rs_debug("cursor hook initialized")
     
-    def view_click(self, view, event):
-        """
-        Hook for mouse click events.
-        Provides immediate response to mouse navigation.
-        """
-        if not self.hypersync_enabled or not self.rh.is_active:
-            return 0
+    def ready_to_run(self):
+        """Called when IDA is ready"""
+        return
         
-        # Get EA at click position
-        # Note: get_screen_ea() returns current cursor position
-        ea = ida_kernwin.get_screen_ea()
-        
-        # Sync immediately on click
-        self._sync_position(ea)
-        
-        return 0  # Don't consume the event
+    # def view_curpos(self, view):
+    #     self.screen_ea_changed(ea = idc.get_screen_ea())
     
-    def view_curpos(self, view):
-        """
-        Hook for cursor position changes.
-        Called when cursor moves in a view.
-        """
-        if not self.hypersync_enabled or not self.rh.is_active:
-            return
-        
-        ea = ida_kernwin.get_screen_ea()
-        self._sync_position(ea)
+    # def view_keydown(self, view):
+    #     self.screen_ea_changed(ea = idc.get_screen_ea())
     
-    def _register_tracking_action(self):
-        """
-        Register an invisible action that tracks keyboard navigation.
-        This action updates on every cursor move (AST_ENABLE).
-        """
-        if self.action_registered:
-            return
+    # def view_loc_changed(self, view):
+    #     self.screen_ea_changed(ea = idc.get_screen_ea())
         
-        action_desc = ida_kernwin.action_desc_t(
-            'hypersync:track_cursor',  # Unique action name
-            'HyperSync Cursor Tracking',  # Action label
-            self,  # Handler (self implements action_handler_t)
-            None,  # No shortcut
-            'Internal HyperSync cursor tracking',  # Tooltip
-            -1  # No icon
-        )
-        
-        if ida_kernwin.register_action(action_desc):
-            self.action_registered = True
-            rs_debug("HyperSync tracking action registered")
-        else:
-            rs_log("Failed to register HyperSync tracking action")
-    
-    def _unregister_tracking_action(self):
-        """Unregister the tracking action"""
-        if self.action_registered:
-            ida_kernwin.unregister_action('hypersync:track_cursor')
-            self.action_registered = False
-            rs_debug("HyperSync tracking action unregistered")
-    
-    def activate(self, ctx):
+    def screen_ea_changed(self, ea, prev_ea=None):
         """
-        Action handler activate callback.
-        This is never actually invoked by user, only used for update().
-        """
-        return 0
-    
-    def update(self, ctx):
-        """
-        Action handler update callback.
-        Called frequently when cursor moves (because we return AST_ENABLE).
-        This provides keyboard navigation tracking.
-        """
-        if not self.hypersync_enabled or not self.rh.is_active:
-            return ida_kernwin.AST_DISABLE_ALWAYS
-        
-        # Get current cursor position from context
-        if hasattr(ctx, 'cur_ea'):
-            ea = ctx.cur_ea
-            self._sync_position(ea)
-        
-        # Return AST_ENABLE to be called again on any change
-        return ida_kernwin.AST_ENABLE
-    
-    def _timer_callback(self):
-        """
-        Timer callback for periodic cursor position checks.
-        This is the fallback method that ensures we never miss changes.
-        """
-        if not self.hypersync_enabled:
-            return -1  # Keep timer running
-            
-        if not self.rh.is_active:
-            return -1  # Keep timer running
-        
-        ea = ida_kernwin.get_screen_ea()
-        self._sync_position(ea)
-        
-        return -1  # Keep timer running
-    
-    def _sync_position(self, ea):
-        """
-        Core synchronization logic.
-        Sends EA change to x64dbg if position changed.
+        Called when the current EA (cursor position) changes.
+        This is the key hook for HyperSync functionality.
         
         Args:
-            ea: Effective address to sync
+            ea: New effective address (cursor position)
+            prev_ea: Previous effective address
         """
         with self.lock:
+            if not self.hypersync_enabled:
+                rs_debug("hypersync not enabled")
+                return
+                
+            if not self.rh.is_active:
+                rs_debug("rh not active")
+                return
+                
             # Ignore if this was triggered by a remote change to prevent echo
-            if self.remote_change:
+            if self.remote_change or ea == self.last_remote_ea:
+                rs_debug("remote change")
                 self.remote_change = False
                 return
-            
+                
             # Only sync if EA actually changed
             if ea == self.prev_ea:
+                rs_debug("EA didn't change")
                 return
-            
+                
             self.prev_ea = ea
             
             # Get module information
@@ -1104,8 +981,9 @@ class CursorHook(ida_kernwin.View_Hooks, ida_kernwin.action_handler_t):
             
             # Check if EA is in valid segment
             if not self.rh.is_safe(ea):
+                rs_debug("EA points to invalid address: 0x%x" % ea)
                 return
-            
+                
             # Calculate RVA (relative virtual address)
             rva = ea - base
             
@@ -1116,23 +994,25 @@ class CursorHook(ida_kernwin.View_Hooks, ida_kernwin.action_handler_t):
     def enable_hypersync(self):
         """Enable HyperSync mode"""
         with self.lock:
-            if not self.hypersync_enabled:
-                self.hypersync_enabled = True
-                self.prev_ea = ida_kernwin.get_screen_ea()  # Initialize with current position
-                rs_log("HyperSync cursor tracking enabled")
-                
+            if self.hypersync_enabled:
+                return
+            self.hypersync_enabled = True
+            rs_log("HyperSync cursor tracking enabled")
+            
     def disable_hypersync(self):
         """Disable HyperSync mode"""
         with self.lock:
-            if self.hypersync_enabled:
-                self.hypersync_enabled = False
-                self.prev_ea = None
-                rs_log("HyperSync cursor tracking disabled")
-                
-    def set_remote_change(self):
+            if not self.hypersync_enabled:
+                return
+            self.hypersync_enabled = False
+            self.prev_ea = None
+            rs_log("HyperSync cursor tracking disabled")
+            
+    def set_remote_change(self, ea):
         """Mark next EA change as remote-triggered to prevent echo loop"""
         with self.lock:
             self.remote_change = True
+            self.last_remote_ea = ea
 
 # --------------------------------------------------------------------------
 

@@ -180,6 +180,13 @@ class BrokerSrv():
             self.announcement("beacon not received (this may be dispatcher error, "
                               "tip: please check that the port %d is available )" % self.dispatcher_port)
             self.req_kill(s, hash)
+            
+    def req_rva(self, s, hash):
+        modname = hash['modname']
+        base = hash['base']
+        rva = hash['rva']
+         # It gets here --- {'type': 'rva', 'modname': 'Freestyle.vst3', 'base': 6442450944, 'rva': 18829898, 'id': 'idapro'}"
+        self.notice_dispatcher('rva', "\"modname\":\"%s\",\"base\":%d,\"rva\":%d,\"id\":\"idapro\"" % (modname, base, rva))
 
     def parse_exec(self, s, req):
         if not (req[0:8] == '[notice]'):
@@ -259,7 +266,8 @@ class BrokerSrv():
             'dispatcher': self.req_dispatcher,
             'cmd': self.req_cmd,
             'kill': self.req_kill,
-            'beacon': self.req_beacon
+            'beacon': self.req_beacon,
+            'rva': self.req_rva
         }
 
 
