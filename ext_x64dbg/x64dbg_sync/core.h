@@ -32,7 +32,8 @@ enum MENU_IDENTIFIERS {
 	MENU_ENABLE_SYNC,
 	MENU_DISABLE_SYNC,
 	MENU_IDB_LIST,
-	MENU_SYNC_HELP
+	MENU_SYNC_HELP,
+	MENU_HYPER_SYNC
 };
 
 //functions
@@ -43,9 +44,14 @@ HRESULT synchelp();
 HRESULT idblist();
 HRESULT cmt(PSTR Args);
 HRESULT rcmt();
+HRESULT hypersync();
+HRESULT hypersyncoff();
 
 void coreInit(PLUG_INITSTRUCT* initStruct);
 void coreStop();
 void coreSetup();
+
+// HyperSync state
+extern BOOL g_HyperSyncEnabled;
 
 #endif // _CORE_H

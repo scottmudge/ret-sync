@@ -45,6 +45,10 @@ REGDUMP_AVX512 regs;
 // Synchronisation mode
 static BOOL g_SyncAuto = true;
 
+// HyperSync state
+BOOL g_HyperSyncEnabled = FALSE;
+static BOOL g_RemoteLocationChange = FALSE;
+
 // Buffer used to solve symbol's name
 static CHAR g_NameBuffer[MAX_MODULE_SIZE];
 
@@ -442,6 +446,11 @@ HRESULT syncoff()
 		return hRes;
 	}
 
+	// Disable HyperSync if active
+	if (g_HyperSyncEnabled) {
+		hypersyncoff();
+	}
+
 	ReleasePollTimer();
 	hRes = TunnelClose();
 	_plugin_logputs("[sync] sync is now disabled\n");
@@ -465,7 +474,9 @@ HRESULT synchelp()
 		" > !idb <module name>             = set given module as the active idb (see !idblist)\n"
 		" > !idbn <n>                      = set active idb to the n_th client. n should be a valid decimal value\n"
 		" > !translate <base> <addr> <mod> = rebase an address with respect to local module's base\n"
-		" > !insync                        = synchronize the selected instruction block in the disassembly window.\n\n");
+		" > !insync                        = synchronize the selected instruction block in the disassembly window\n"
+		" > !hypersync                     = enable HyperSync mode (syncs selected instructions)\n"
+		" > !hypersyncoff                  = disable HyperSync mode\n\n");
 
 	return hRes;
 }
@@ -593,6 +604,149 @@ INSYNC_FAILURE:
 		TunnelSend("[notice]{\"type\":\"dbg_err\"}\n");
 		g_Base = NULL;
 	}
+
+	return hRes;
+}
+
+
+// HyperSync command implementation - enable HyperSync mode
+HRESULT hypersync()
+{
+	HRESULT hRes = S_OK;
+
+	if (!g_Synchronized) {
+		_plugin_logputs("[sync] not synced, !hypersync command unavailable\n");
+		return E_FAIL;
+	}
+
+	if (g_HyperSyncEnabled) {
+		_plugin_logputs("[sync] HyperSync already enabled\n");
+		return hRes;
+	}
+
+	g_HyperSyncEnabled = TRUE;
+	g_RemoteLocationChange = FALSE;
+
+	// Send HyperSync state to IDA plugin
+	hRes = TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":true}\n");
+	if (FAILED(hRes)) {
+		_plugin_logputs("[sync] failed to send HyperSync enable message\n");
+		g_HyperSyncEnabled = FALSE;
+		return hRes;
+	}
+
+	_plugin_logputs("[sync] HyperSync mode enabled\n");
+	return hRes;
+}
+
+
+// HyperSync command implementation - disable HyperSync mode
+HRESULT hypersyncoff()
+{
+	HRESULT hRes = S_OK;
+
+	if (!g_HyperSyncEnabled) {
+		_plugin_logputs("[sync] HyperSync not enabled\n");
+		return hRes;
+	}
+
+	g_HyperSyncEnabled = FALSE;
+	g_RemoteLocationChange = FALSE;
+
+	// Send HyperSync state to IDA plugin
+	hRes = TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":false}\n");
+	if (FAILED(hRes)) {
+		_plugin_logputs("[sync] failed to send HyperSync disable message\n");
+	}
+
+	_plugin_logputs("[sync] HyperSync mode disabled\n");
+	return hRes;
+}
+
+
+// Handle selection changes in HyperSync mode
+HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
+{
+	HRESULT hRes = S_OK;
+	ULONG_PTR va = 0;
+	ULONG_PTR modBase = 0;
+	CHAR modName[MAX_MODULE_SIZE] = { 0 };
+
+	if (!g_HyperSyncEnabled)
+		return hRes;
+
+	// Only handle disassembly window selection changes
+	if (sel->hWindow != GUI_DISASSEMBLY)
+		return hRes;
+
+	// Ignore if this is a remote-triggered location change
+	if (g_RemoteLocationChange) {
+		g_RemoteLocationChange = FALSE;
+		return hRes;
+	}
+
+	// Get the selected virtual address
+	va = Script::Gui::Disassembly::SelectionGetStart();
+	if (!va)
+		return E_FAIL;
+
+	// Get module base and name
+	modBase = DbgFunctions()->ModBaseFromAddr(va);
+	if (!modBase) {
+#if VERBOSE >= 2
+		_plugin_logprintf("[sync] HyperSync: could not get module base for VA %p\n", va);
+#endif
+		return E_FAIL;
+	}
+
+	if (!DbgFunctions()->ModNameFromAddr(va, modName, FALSE)) {
+#if VERBOSE >= 2
+		_plugin_logprintf("[sync] HyperSync: could not get module name for VA %p\n", va);
+#endif
+		return E_FAIL;
+	}
+
+#if VERBOSE >= 2
+	_plugin_logprintf("[sync] HyperSync: sending RVA for %s: base=%p, va=%p, rva=%p\n", 
+		modName, modBase, va, va - modBase);
+#endif
+
+	// Send relative address to IDA
+	hRes = TunnelSend("[sync]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%llu,\"rva\":%llu}\n", 
+		modName, (ULONG64)modBase, (ULONG64)(va - modBase));
+
+	return hRes;
+}
+
+
+// Handle incoming RVA from IDA in HyperSync mode
+HRESULT HandleRemoteRVA(PSTR modName, ULONG64 rva)
+{
+	HRESULT hRes = S_OK;
+	ULONG_PTR modBase = 0;
+	ULONG_PTR targetVA = 0;
+
+	if (!g_HyperSyncEnabled)
+		return hRes;
+
+	modBase = DbgFunctions()->ModBaseFromName(modName);
+	if (!modBase) {
+		_plugin_logprintf("[sync] HyperSync: module %s not loaded\n", modName);
+		return E_FAIL;
+	}
+
+	targetVA = modBase + (ULONG_PTR)rva;
+
+	// Set flag to prevent echoing this back to IDA
+	g_RemoteLocationChange = TRUE;
+
+	// Navigate to the address in the disassembly window
+	GuiDisasmAt(targetVA, targetVA);
+
+#if VERBOSE >= 2
+	_plugin_logprintf("[sync] HyperSync: navigated to %s+%llx (VA: %p)\n", 
+		modName, rva, targetVA);
+#endif
 
 	return hRes;
 }
@@ -986,6 +1140,22 @@ static bool cbInsyncCommand(int argc, char* argv[])
 }
 
 
+static bool cbHypersyncCommand(int argc, char* argv[])
+{
+	_plugin_logputs("[sync] hypersync command!");
+	hypersync();
+	return true;
+}
+
+
+static bool cbHypersyncoffCommand(int argc, char* argv[])
+{
+	_plugin_logputs("[sync] hypersyncoff command!");
+	hypersyncoff();
+	return true;
+}
+
+
 static bool cbTranslateCommand(int argc, char* argv[])
 {
 #if VERBOSE >= 2
@@ -1052,6 +1222,12 @@ extern "C" __declspec(dllexport) void CBDEBUGEVENT(CBTYPE cbType, PLUG_CB_DEBUGE
 }
 
 
+extern "C" __declspec(dllexport) void CBSELCHANGED(CBTYPE cbType, PLUG_CB_SELCHANGED* info)
+{
+	HandleSelectionChange(info);
+}
+
+
 extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENTRY* info)
 {
 	switch (info->hEntry)
@@ -1072,7 +1248,15 @@ extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENT
 		cbSynchelpCommand(0, NULL);
 		break;
 
-	break;
+	case MENU_HYPER_SYNC:
+		if (!g_HyperSyncEnabled)
+			cbHypersyncCommand(0, NULL);
+		else
+			cbHypersyncoffCommand(0, NULL);
+		break;
+
+	default:
+		break;
 	}
 }
 
@@ -1117,8 +1301,15 @@ void coreInit(PLUG_INITSTRUCT* initStruct)
 	if (!_plugin_registercommand(pluginHandle, "!insync", cbInsyncCommand, true))
 		_plugin_logputs("[sync] error registering the \"!insync\" command");
 
+	if (!_plugin_registercommand(pluginHandle, "!hypersync", cbHypersyncCommand, true))
+		_plugin_logputs("[sync] error registering the \"!hypersync\" command");
+
+	if (!_plugin_registercommand(pluginHandle, "!hypersyncoff", cbHypersyncoffCommand, true))
+		_plugin_logputs("[sync] error registering the \"!hypersyncoff\" command");
+
 	// initialize globals
 	g_Synchronized = FALSE;
+	g_HyperSyncEnabled = FALSE;
 
 	g_hPollCompleteEvent = CreateEvent(NULL, true, false, NULL);
 	if (g_hPollCompleteEvent == NULL)
@@ -1155,6 +1346,8 @@ void coreStop()
 	_plugin_unregistercommand(pluginHandle, "!rcmt");
 	_plugin_unregistercommand(pluginHandle, "!translate");
 	_plugin_unregistercommand(pluginHandle, "!insync");
+	_plugin_unregistercommand(pluginHandle, "!hypersync");
+	_plugin_unregistercommand(pluginHandle, "!hypersyncoff");
 	_plugin_menuclear(hMenu);
 }
 
@@ -1165,4 +1358,5 @@ void coreSetup()
 	_plugin_menuaddentry(hMenu, MENU_DISABLE_SYNC, "&Disable sync");
 	_plugin_menuaddentry(hMenu, MENU_IDB_LIST, "&Retrieve idb list");
 	_plugin_menuaddentry(hMenu, MENU_SYNC_HELP, "&Display sync commands help");
+	_plugin_menuaddentry(hMenu, MENU_HYPER_SYNC, "&HyperSync mode");
 }

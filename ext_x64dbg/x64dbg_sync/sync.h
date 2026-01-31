@@ -24,6 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <windows.h>
 #include "pluginsdk\_plugins.h"
+#include "pluginsdk\_scriptapi_gui.h"
 
 
 #ifndef DLL_EXPORT

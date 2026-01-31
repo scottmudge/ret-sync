@@ -749,6 +749,94 @@ class RequestHandler(object):
     # send a single step command (F10) to the debugger (via the broker and dispatcher)
     def so_notice(self):
         self.cmd_notice('so', descr='step')
+        
+    # HyperSync: Handle enable/disable request from x64dbg
+    def req_hyper_sync(self, hash):
+        """
+        Handle HyperSync state change from debugger.
+        
+        Args:
+            hash: Dictionary with 'enabled' boolean field
+        """
+        enabled = hash.get('enabled', False)
+        
+        if enabled:
+            rs_log("enabling HyperSync mode")
+            self.hypersync_enabled = True
+            
+            # Create and install cursor hook if not already done
+            if not self.cursor_hook:
+                self.cursor_hook = CursorHook(self)
+                self.cursor_hook.hook()
+                
+            self.cursor_hook.enable_hypersync()
+            
+        else:
+            rs_log("disabling HyperSync mode")
+            self.hypersync_enabled = False
+            
+            if self.cursor_hook:
+                self.cursor_hook.disable_hypersync()
+    
+    # HyperSync: Handle RVA (selection) message from x64dbg
+    def req_rva(self, hash):
+        """
+        Handle relative virtual address from debugger.
+        Navigate IDA to the corresponding address.
+        
+        Args:
+            hash: Dictionary with 'modname', 'base', and 'rva' fields
+        """
+        if not self.hypersync_enabled:
+            return
+            
+        modname = hash.get('modname')
+        base = hash.get('base')
+        rva = hash.get('rva')
+        
+        if not all([modname, base is not None, rva is not None]):
+            rs_log("invalid RVA message format")
+            return
+            
+        # Check if this RVA is for our module
+        if modname.lower() != self.name.lower():
+            rs_debug("RVA for different module: %s (ours: %s)" % (modname, self.name))
+            return
+            
+        # Calculate effective address
+        ea = self.base + rva
+        
+        if not self.is_safe(ea):
+            rs_log("RVA points to invalid address: 0x%x" % ea)
+            return
+            
+        # Mark this as a remote change to prevent echo
+        if self.cursor_hook:
+            self.cursor_hook.set_remote_change()
+            
+        # Jump to the address in IDA
+        rs_debug("[HyperSync] Jumping to 0x%x (from RVA 0x%x)" % (ea, rva))
+        idaapi.jumpto(ea)
+    
+    # HyperSync: Send RVA to x64dbg via broker
+    def notice_broker_rva(self, modname, base, rva):
+        """
+        Send relative virtual address to debugger via broker.
+        
+        Args:
+            modname: Module name
+            base: Module base address
+            rva: Relative virtual address (offset from base)
+        """
+        if not self.broker_sock:
+            return
+            
+        notice = "[sync]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%d,\"rva\":%d}\n" % (modname, base, rva)
+        
+        try:
+            self.broker_sock.sendall(rs_encode(notice))
+        except socket.error:
+            rs_log("failed to send RVA notice")
 
     # send a notice message to the broker process
     def notice_broker(self, type, args=None):
@@ -766,6 +854,11 @@ class RequestHandler(object):
             None
 
     def stop(self):
+        # Unhook cursor tracking
+        if self.cursor_hook:
+            self.cursor_hook.unhook()
+            self.cursor_hook = None
+            
         if self.broker_sock:
             self.broker_sock.close()
             self.broker_sock = None
@@ -789,6 +882,8 @@ class RequestHandler(object):
         self.broker_sock = None
         self.is_active = False
         self.dbg_dialect = None
+        self.cursor_hook = None
+        self.hypersync_enabled = False
         self.req_handlers = {
             'broker': self.req_broker,
             'loc': self.req_loc,
@@ -807,10 +902,87 @@ class RequestHandler(object):
             'bps_get': self.req_bps_get,
             'bps_set': self.req_bps_set,
             'modcheck': self.req_modcheck,
-            'dialect': self.req_set_dbg_dialect
+            'dialect': self.req_set_dbg_dialect,
+            'hyper_sync': self.req_hyper_sync,
+            'rva': self.req_rva
         }
         self.prev_req = ""  # used as a cache if json is not completely received
 
+
+class CursorHook(ida_kernwin.UI_Hooks):
+    """
+    Hook to track cursor position changes in IDA Pro.
+    Used for HyperSync mode to synchronize selected lines with debugger.
+    """
+    
+    def __init__(self, request_handler):
+        ida_kernwin.UI_Hooks.__init__(self)
+        self.rh = request_handler
+        self.prev_ea = None
+        self.hypersync_enabled = False
+        self.remote_change = False
+        
+    def ready_to_run(self):
+        """Called when IDA is ready"""
+        pass
+        
+    def current_ea_changed(self, ea, prev_ea):
+        """
+        Called when the current EA (cursor position) changes.
+        This is the key hook for HyperSync functionality.
+        
+        Args:
+            ea: New effective address (cursor position)
+            prev_ea: Previous effective address
+        """
+        if not self.hypersync_enabled:
+            return
+            
+        if not self.rh.is_active:
+            return
+            
+        # Ignore if this was triggered by a remote change to prevent echo
+        if self.remote_change:
+            self.remote_change = False
+            return
+            
+        # Only sync if EA actually changed
+        if ea == self.prev_ea:
+            return
+            
+        self.prev_ea = ea
+        
+        # Get module information
+        modname = self.rh.name
+        base = self.rh.base
+        
+        # Check if EA is in valid segment
+        if not self.rh.is_safe(ea):
+            return
+            
+        # Calculate RVA (relative virtual address)
+        rva = ea - base
+        
+        # Send RVA message to x64dbg via broker
+        rs_debug("[HyperSync] Sending RVA: %s+0x%x (EA: 0x%x)" % (modname, rva, ea))
+        self.rh.notice_broker_rva(modname, base, rva)
+        
+    def enable_hypersync(self):
+        """Enable HyperSync mode"""
+        if not self.hypersync_enabled:
+            self.hypersync_enabled = True
+            rs_log("HyperSync cursor tracking enabled")
+            
+    def disable_hypersync(self):
+        """Disable HyperSync mode"""
+        if self.hypersync_enabled:
+            self.hypersync_enabled = False
+            self.prev_ea = None
+            rs_log("HyperSync cursor tracking disabled")
+            
+    def set_remote_change(self):
+        """Mark next EA change as remote-triggered to prevent echo loop"""
+        self.remote_change = True
 
 # --------------------------------------------------------------------------
 
