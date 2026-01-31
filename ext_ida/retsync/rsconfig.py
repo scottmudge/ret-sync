@@ -45,7 +45,7 @@ NETNODE_INDEX = 0xFFC0DEFF
 
 # networking settings
 HOST = '127.0.0.1'
-PORT = 9100
+PORT = 9190
 CONNECT_BROKER_MAX_ATTEMPT = 4
 RUN_DISPATCHER_MAX_ATTEMPT = 4
 
@@ -53,8 +53,8 @@ RUN_DISPATCHER_MAX_ATTEMPT = 4
 COL_BLANK = 0xffffffff
 COL_GREEN = 0x33ff00
 COL_DEEP_PURPLE = 0xff44dd
-COL_YLW = 0x23ffff
-COL_YLW_LIGHT = 0xccffff
+COL_YLW = 0x745634
+COL_YLW_LIGHT = 0x986f44
 COL_BLUE_NAVY = 0x000080
 COL_GRAY = 0x808080
 
@@ -185,13 +185,15 @@ PY_WIN_DEFAULTS = set(["C:\\Python27", "C:\\Python27-x64"])
 # default local/user paths Windows platforms
 PY_WIN_LOCAL_DEFAULTS = set()
 
-PY3_RELEASES = ["37", "38", "39", "310"]
+PY3_RELEASES = ["37", "38", "39", "310", "314"]
 
 for py_rel in PY3_RELEASES:
     PY_WIN_DEFAULTS.add("C:\\Program Files\\Python%s" % py_rel)
     PY_WIN_DEFAULTS.add("C:\\Program Files (x86)\\Python%s-32" % py_rel)
+    PY_WIN_DEFAULTS.add("C:\\Program Files (x86)\\Python%s-34" % py_rel)
     PY_WIN_LOCAL_DEFAULTS.add("%%LOCALAPPDATA%%\\Programs\\Python\\Python%s" % py_rel)
     PY_WIN_LOCAL_DEFAULTS.add("%%LOCALAPPDATA%%\\Programs\\Python\\Python%s-32" % py_rel)
+    PY_WIN_LOCAL_DEFAULTS.add("%%LOCALAPPDATA%%\\Programs\\Python\\Python%s-34" % py_rel)
 
 
 # default paths Linux/Mac OS X platforms

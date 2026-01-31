@@ -29,7 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 // Default host value is locahost
 static const CHAR *g_DefaultHost = "127.0.0.1";
-static const CHAR *g_DefaultPort = "9100";
+static const CHAR *g_DefaultPort = "9190";
 
 // Command polling feature
 static HANDLE g_hPollTimer = INVALID_HANDLE_VALUE;
@@ -40,7 +40,7 @@ static CRITICAL_SECTION g_CritSectPollRelease;
 // Debuggee's state;
 ULONG_PTR g_Offset = NULL;
 ULONG_PTR g_Base = NULL;
-REGDUMP regs;
+REGDUMP_AVX512 regs;
 
 // Synchronisation mode
 static BOOL g_SyncAuto = true;
@@ -93,7 +93,7 @@ LoadConfigurationFile()
 		_plugin_logprintf("[sync]    -> set HOST to %s\n", g_DefaultHost);
 	}
 
-	count = GetPrivateProfileString("INTERFACE", "port", "9100", lpConfPort, MAX_PATH, lpProfile);
+	count = GetPrivateProfileString("INTERFACE", "port", "9190", lpConfPort, MAX_PATH, lpProfile);
 	if ((count > 0) && (count < (MAX_PATH - 2))) {
 		g_DefaultPort = lpConfPort;
 		_plugin_logprintf("[sync]    -> set PORT to %s\n", g_DefaultPort);

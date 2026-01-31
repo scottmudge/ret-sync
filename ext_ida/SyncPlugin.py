@@ -39,8 +39,12 @@ from retsync.syncrays import Syncrays
 import retsync.rsconfig as rsconfig
 from retsync.rsconfig import rs_encode, rs_decode, rs_log, rs_debug, load_configuration
 
-from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QProcess
+try:
+    from PySide6 import QtCore, QtWidgets, QtGui # IDA 9.2+
+    print("imported PySide6")
+except ImportError:
+    print("[Warning] PySide6 not found, falling back to PyQt5")
+    from PyQt5 import QtCore, QtWidgets, QtGui
 
 import idc
 import idaapi
