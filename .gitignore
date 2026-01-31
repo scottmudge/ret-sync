@@ -1,3 +1,4 @@
 ext_x64dbg/x64/
 ext_x64dbg/x64dbg_sync/x64/
 *.pyc
+.vscode/

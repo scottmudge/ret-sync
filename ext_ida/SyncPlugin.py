@@ -213,7 +213,7 @@ class RequestHandler(object):
         if self.color:
             self.cb_color(ea)
 
-        idaapi.jumpto(ea)
+        idaapi.jumpto(ea, -1, 0)
         self.cb_curline(ea)
         self.gm.center()
 
@@ -820,8 +820,9 @@ class RequestHandler(object):
             self.cursor_hook.set_remote_change(ea)
             
         # Jump to the address in IDA
-        rs_debug("[HyperSync] Jumping to 0x%x (from RVA 0x%x)" % (ea, rva))
-        idaapi.jumpto(ea)
+        # rs_debug("[HyperSync] Jumping to 0x%x (from RVA 0x%x)" % (ea, rva))
+        # idaapi.jumpto(ea, -1, idaapi.UIJMP_DONTPUSH)
+        idaapi.jumpto(ea, -1, 0)
     
     # HyperSync: Send RVA to x64dbg via broker
     def notice_broker_rva(self, modname, base, rva):
@@ -840,7 +841,7 @@ class RequestHandler(object):
         
         try:
             self.broker_sock.sendall(rs_encode(notice))
-            rs_debug("sent RVA notice: %s" % notice)        
+            # rs_debug("sent RVA notice: %s" % notice)        
         except socket.error as e:
             rs_log(f"failed to send RVA notice: {e}")
 
@@ -930,19 +931,6 @@ class CursorHook(ida_kernwin.UI_Hooks):
         self.last_remote_ea = None
         self.lock = threading.Lock()
         rs_debug("cursor hook initialized")
-    
-    def ready_to_run(self):
-        """Called when IDA is ready"""
-        return
-        
-    # def view_curpos(self, view):
-    #     self.screen_ea_changed(ea = idc.get_screen_ea())
-    
-    # def view_keydown(self, view):
-    #     self.screen_ea_changed(ea = idc.get_screen_ea())
-    
-    # def view_loc_changed(self, view):
-    #     self.screen_ea_changed(ea = idc.get_screen_ea())
         
     def screen_ea_changed(self, ea, prev_ea=None):
         """
@@ -964,13 +952,14 @@ class CursorHook(ida_kernwin.UI_Hooks):
                 
             # Ignore if this was triggered by a remote change to prevent echo
             if self.remote_change or ea == self.last_remote_ea:
-                rs_debug("remote change")
+                # rs_debug("remote change")
                 self.remote_change = False
+                self.last_remote_ea = -1
                 return
                 
             # Only sync if EA actually changed
             if ea == self.prev_ea:
-                rs_debug("EA didn't change")
+                # rs_debug("EA didn't change")
                 return
                 
             self.prev_ea = ea
@@ -988,7 +977,7 @@ class CursorHook(ida_kernwin.UI_Hooks):
             rva = ea - base
             
             # Send RVA message to x64dbg via broker
-            rs_debug("[HyperSync] Sending RVA: %s+0x%x (EA: 0x%x)" % (modname, rva, ea))
+            # rs_debug("[HyperSync] Sending RVA: %s+0x%x (EA: 0x%x)" % (modname, rva, ea))
             self.rh.notice_broker_rva(modname, base, rva)
         
     def enable_hypersync(self):

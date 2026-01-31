@@ -33,6 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Default host value is locahost
 static const CHAR *g_DefaultHost = "127.0.0.1";
 static const CHAR *g_DefaultPort = "9190";
+static const BOOL g_EnableHyperSyncByDefault = TRUE;
 
 // Command polling feature
 static HANDLE g_hPollTimer = INVALID_HANDLE_VALUE;
@@ -244,15 +245,11 @@ PollCmd()
 	if (FAILED(hRes)) {
 		// Only print once a second
 		static DWORD lastPrint = 0;
-		if (GetTickCount() - lastPrint > 1000) {
+		if (lastPrint == 0 || GetTickCount() - lastPrint > 60000) {
 			_plugin_logprintf("[sync] TunnelPoll failed\n");
 			lastPrint = GetTickCount();
 		}
 		return hRes;
-	}
-
-	if (NbBytesRecvd != 0) {
-		_plugin_logprintf("[sync] TunnelPoll returned %d bytes, msg: %s\n", NbBytesRecvd, msg);	
 	}
 
 	if (SUCCEEDED(hRes) && (NbBytesRecvd > 0) && (msg != NULL))
@@ -264,10 +261,6 @@ PollCmd()
 			next = strchr(msg, ch);
 			if (next != NULL)
 				*next = 0;
-
-#if VERBOSE >= 2
-			_plugin_logprintf("[sync] received command : %s\n", msg);
-#endif
 
 			// Check if this is a JSON sync message
 			if (strncmp(msg, "[sync]", 6) == 0) {
@@ -289,9 +282,10 @@ PollCmd()
 							
 							// Validate and handle
 							if (!modName.empty() && rva != 0) {
+#if VERBOSE >= 2
 								_plugin_logprintf("[sync] HyperSync RVA: %s+0x%llx (base: 0x%llx)\n", 
 									modName.c_str(), rva, base);
-								
+#endif
 								// Convert std::string to char array for handler
 								char modNameBuf[MAX_MODULE_SIZE] = {0};
 								strncpy_s(modNameBuf, MAX_MODULE_SIZE, modName.c_str(), _TRUNCATE);
@@ -323,7 +317,9 @@ PollCmd()
 				// Regular x64dbg command
 				bRes = DbgCmdExec(msg);
 				if (!bRes) {
+#if VERBOSE >= 2
 					_plugin_logprintf("[sync] received command: %s (not yet implemented)\n", msg);
+#endif
 				}
 			}
 
@@ -1104,6 +1100,7 @@ static bool cbSyncCommand(int argc, char* argv[])
 {
 	_plugin_logputs("[sync] sync command!");
 	sync(NULL);
+	if (g_EnableHyperSyncByDefault) hypersync();
 	return true;
 }
 
@@ -1111,6 +1108,7 @@ static bool cbSyncCommand(int argc, char* argv[])
 static bool cbSyncoffCommand(int argc, char* argv[])
 {
 	_plugin_logputs("[sync] syncoff command!");
+	if (g_EnableHyperSyncByDefault) hypersyncoff();
 	syncoff();
 	return true;
 }

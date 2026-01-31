@@ -34,6 +34,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 static CHAR SendBuffer[MAX_SEND];
 static CHAR RecvBuffer[MAX_SEND];
 BOOL g_Synchronized = FALSE;
+extern BOOL g_HyperSyncEnabled;
+extern HRESULT hypersyncoff();
 SOCKET g_Sock = INVALID_SOCKET;
 WSADATA wsaData;
 
@@ -269,6 +271,7 @@ HRESULT TunnelClose()
 
     _plugin_logprintf("[sync] sync is off\n");
     g_Synchronized = FALSE;
+    if (g_HyperSyncEnabled) hypersyncoff();
     WSACleanup();
     return hRes;
 }

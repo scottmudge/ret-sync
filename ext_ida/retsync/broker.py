@@ -185,7 +185,6 @@ class BrokerSrv():
         modname = hash['modname']
         base = hash['base']
         rva = hash['rva']
-         # It gets here --- {'type': 'rva', 'modname': 'Freestyle.vst3', 'base': 6442450944, 'rva': 18829898, 'id': 'idapro'}"
         self.notice_dispatcher('rva', "\"modname\":\"%s\",\"base\":%d,\"rva\":%d,\"id\":\"idapro\"" % (modname, base, rva))
 
     def parse_exec(self, s, req):

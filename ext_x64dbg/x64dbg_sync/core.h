@@ -25,7 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "sync.h"
 
 #define SYNC_TIMER_DELAY 1000
-#define TIMER_PERIOD 100
+#define TIMER_PERIOD 25
 #define CONF_FILE "\\.sync"
 
 enum MENU_IDENTIFIERS {

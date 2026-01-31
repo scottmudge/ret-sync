@@ -99,7 +99,6 @@ class DispatcherSrv():
         
     def req_rva(self, s, hash):
         """Forward RVA message to debugger client"""
-        # self.broadcast("req_rva: %s" % hash)
         msg = "[sync]%s\n" % json.dumps(hash)
         if not self.current_dbg:
             return
