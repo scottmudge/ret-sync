@@ -131,6 +131,38 @@ GetInstructionOffset(ULONG_PTR *cip)
 	return S_OK;
 }
 
+// Handle incoming RVA from IDA in HyperSync mode
+HRESULT HandleRemoteRVA(PSTR modName, ULONG64 rva)
+{
+	HRESULT hRes = S_OK;
+	ULONG_PTR modBase = 0;
+	ULONG_PTR targetVA = 0;
+
+	if (!g_HyperSyncEnabled)
+		return hRes;
+
+	modBase = DbgFunctions()->ModBaseFromName(modName);
+	if (!modBase) {
+		_plugin_logprintf("[sync] HyperSync: module %s not loaded\n", modName);
+		return E_FAIL;
+	}
+
+	targetVA = modBase + (ULONG_PTR)rva;
+
+	// Set flag to prevent echoing this back to IDA
+	g_RemoteLocationChange = TRUE;
+
+	// Navigate to the address in the disassembly window
+	GuiDisasmAt(targetVA, targetVA);
+
+#if VERBOSE >= 2
+	_plugin_logprintf("[sync] HyperSync: navigated to %s+%llx (VA: %p)\n", 
+		modName, rva, targetVA);
+#endif
+
+	return hRes;
+}
+
 
 // Update state and send info to client: eip module's base address, offset, name
 HRESULT
@@ -220,9 +252,48 @@ PollCmd()
 			_plugin_logprintf("[sync] received command : %s\n", msg);
 #endif
 
-			bRes = DbgCmdExec(msg);
-			if (!bRes) {
-				_plugin_logprintf("[sync] received command: %s (not yet implemented)\n", msg);
+			// Check if this is a JSON sync message (for HyperSync RVA)
+			if (strncmp(msg, "[sync]", 6) == 0) {
+				// Parse JSON message for HyperSync RVA
+				const char* json_start = msg + 6; // Skip "[sync]" prefix
+				
+				// Simple JSON parsing for RVA message
+				// Format: {"type":"rva","modname":"...","base":...,"rva":...}
+				if (strstr(json_start, "\"type\":\"rva\"")) {
+					// Extract module name
+					char modName[MAX_MODULE_SIZE] = {0};
+					const char* modname_start = strstr(json_start, "\"modname\":\"");
+					if (modname_start) {
+						modname_start += 11; // Skip "modname":"
+						const char* modname_end = strchr(modname_start, '"');
+						if (modname_end) {
+							size_t len = modname_end - modname_start;
+							if (len < MAX_MODULE_SIZE) {
+								strncpy_s(modName, MAX_MODULE_SIZE, modname_start, len);
+							}
+						}
+					}
+					
+					// Extract RVA
+					ULONG64 rva = 0;
+					const char* rva_start = strstr(json_start, "\"rva\":");
+					if (rva_start) {
+						rva_start += 6; // Skip "rva":
+						rva = _strtoui64(rva_start, NULL, 10);
+					}
+					
+					// Call handler if we got valid data
+					if (modName[0] != 0 && rva != 0) {
+						HandleRemoteRVA(modName, rva);
+					}
+				}
+			}
+			else {
+				// Regular x64dbg command
+				bRes = DbgCmdExec(msg);
+				if (!bRes) {
+					_plugin_logprintf("[sync] received command: %s (not yet implemented)\n", msg);
+				}
 			}
 
 			// No more command
@@ -676,7 +747,8 @@ HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
 		return hRes;
 
 	// Only handle disassembly window selection changes
-	if (sel->hWindow != GUI_DISASSEMBLY)
+	// hWindow: 0 = Disassembly, 1 = Dump, 2 = Stack
+	if (sel->hWindow != 0)  // 0 is disassembly window
 		return hRes;
 
 	// Ignore if this is a remote-triggered location change
@@ -686,9 +758,13 @@ HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
 	}
 
 	// Get the selected virtual address
-	va = Script::Gui::Disassembly::SelectionGetStart();
+	va = sel->VA;
 	if (!va)
 		return E_FAIL;
+
+#if VERBOSE >= 2
+	_plugin_logprintf("[sync] HyperSync: selection changed to VA=%p\n", va);
+#endif
 
 	// Get module base and name
 	modBase = DbgFunctions()->ModBaseFromAddr(va);
@@ -699,7 +775,7 @@ HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
 		return E_FAIL;
 	}
 
-	if (!DbgFunctions()->ModNameFromAddr(va, modName, FALSE)) {
+	if (!DbgFunctions()->ModNameFromAddr(va, modName, true)) {
 #if VERBOSE >= 2
 		_plugin_logprintf("[sync] HyperSync: could not get module name for VA %p\n", va);
 #endif
@@ -717,40 +793,6 @@ HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
 
 	return hRes;
 }
-
-
-// Handle incoming RVA from IDA in HyperSync mode
-HRESULT HandleRemoteRVA(PSTR modName, ULONG64 rva)
-{
-	HRESULT hRes = S_OK;
-	ULONG_PTR modBase = 0;
-	ULONG_PTR targetVA = 0;
-
-	if (!g_HyperSyncEnabled)
-		return hRes;
-
-	modBase = DbgFunctions()->ModBaseFromName(modName);
-	if (!modBase) {
-		_plugin_logprintf("[sync] HyperSync: module %s not loaded\n", modName);
-		return E_FAIL;
-	}
-
-	targetVA = modBase + (ULONG_PTR)rva;
-
-	// Set flag to prevent echoing this back to IDA
-	g_RemoteLocationChange = TRUE;
-
-	// Navigate to the address in the disassembly window
-	GuiDisasmAt(targetVA, targetVA);
-
-#if VERBOSE >= 2
-	_plugin_logprintf("[sync] HyperSync: navigated to %s+%llx (VA: %p)\n", 
-		modName, rva, targetVA);
-#endif
-
-	return hRes;
-}
-
 
 HRESULT idbn(PSTR Args)
 {
