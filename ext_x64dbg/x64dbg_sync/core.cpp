@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "core.h"
 #include <windows.h>
 #include <stdio.h>
+#include <map>
 #include <psapi.h>
 #include <strsafe.h>
 #include "tunnel.h"
@@ -55,7 +56,7 @@ static CHAR g_NameBuffer[MAX_MODULE_SIZE];
 // Buffer used generate commands
 static CHAR g_CommandBuffer[MAX_COMMAND_LINE_SIZE];
 
-
+static std::map<std::string, std::pair<ULONG64,ULONG64>> g_LastModBaseRVAMap = std::map<std::string, std::pair<ULONG64,ULONG64>>();
 HRESULT
 LoadConfigurationFile()
 {
@@ -237,6 +238,21 @@ PollCmd()
 	char *msg, *next, *orig = NULL;
 
 	hRes = TunnelPoll(&NbBytesRecvd, &msg);
+
+	// TODO -- Remove after debugging
+	if (FAILED(hRes)) {
+		// Only print once a second
+		static DWORD lastPrint = 0;
+		if (GetTickCount() - lastPrint > 1000) {
+			_plugin_logprintf("[sync] TunnelPoll failed\n");
+			lastPrint = GetTickCount();
+		}
+		return hRes;
+	}
+
+	if (NbBytesRecvd != 0) {
+		_plugin_logprintf("[sync] TunnelPoll returned %d bytes, msg: %s\n", NbBytesRecvd, msg);	
+	}
 
 	if (SUCCEEDED(hRes) && (NbBytesRecvd > 0) && (msg != NULL))
 	{
@@ -782,14 +798,25 @@ HRESULT HandleSelectionChange(PLUG_CB_SELCHANGED* sel)
 		return E_FAIL;
 	}
 
+	const ULONG64 rva = (ULONG64)(va - modBase);
+
+	// If the mod name is in g_LastModBaseRVAMap, and the mod base and last RVA match (as std::pair<ULONG64,ULONG64>), then we can skip sending the RVA
+	if (g_LastModBaseRVAMap.find(modName) != g_LastModBaseRVAMap.end()) {
+		const auto& entry = g_LastModBaseRVAMap[modName];
+		if (entry.first == (ULONG64)modBase && entry.second == (ULONG64)rva) {
+			return hRes;
+		}
+	}
+	g_LastModBaseRVAMap[modName] = std::make_pair((ULONG64)modBase, (ULONG64)rva);
+
 #if VERBOSE >= 2
 	_plugin_logprintf("[sync] HyperSync: sending RVA for %s: base=%p, va=%p, rva=%p\n", 
-		modName, modBase, va, va - modBase);
+		modName, modBase, va, (ULONG_PTR)rva);
 #endif
 
 	// Send relative address to IDA
 	hRes = TunnelSend("[sync]{\"type\":\"rva\",\"modname\":\"%s\",\"base\":%llu,\"rva\":%llu}\n", 
-		modName, (ULONG64)modBase, (ULONG64)(va - modBase));
+		modName, (ULONG64)modBase, (ULONG64)(rva));
 
 	return hRes;
 }
