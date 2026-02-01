@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SYNC_TIMER_DELAY 1000
 #define TIMER_PERIOD 25
 #define CONF_FILE "\\.sync"
+#define AUTO_CONNECT_RETRY_DELAY 2000  // Retry connection every 2 seconds
 
 enum MENU_IDENTIFIERS {
 	MENU_ENABLE_SYNC,
@@ -51,7 +52,14 @@ void coreInit(PLUG_INITSTRUCT* initStruct);
 void coreStop();
 void coreSetup();
 
+// Auto-connect functions
+void StartAutoConnect();
+void StopAutoConnect();
+
 // HyperSync state
 extern BOOL g_HyperSyncEnabled;
+
+// Auto-connect state
+extern BOOL g_AutoConnectEnabled;
 
 #endif // _CORE_H

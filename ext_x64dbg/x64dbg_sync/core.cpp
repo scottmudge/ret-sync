@@ -41,6 +41,11 @@ static HANDLE g_hSyncTimer = INVALID_HANDLE_VALUE;
 static HANDLE g_hPollCompleteEvent = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION g_CritSectPollRelease;
 
+// Auto-connect feature
+static HANDLE g_hAutoConnectTimer = INVALID_HANDLE_VALUE;
+BOOL g_AutoConnectEnabled = TRUE;  // Enabled by default
+static BOOL g_UserDisabledSync = FALSE;  // Track if user explicitly disabled sync
+
 // Debuggee's state;
 ULONG_PTR g_Offset = NULL;
 ULONG_PTR g_Base = NULL;
@@ -407,6 +412,10 @@ CALLBACK PollTimerCb(PVOID lpParameter, BOOL TimerOrWaitFired)
 
 INHIBIT_TIMER_CB:
 	ReleasePollTimer();
+	// Restart auto-connect if enabled and not manually disabled
+	if (g_AutoConnectEnabled && !g_UserDisabledSync) {
+		StartAutoConnect();
+	}
 }
 
 
@@ -486,6 +495,87 @@ void ReleaseSyncTimer()
 }
 
 
+// Auto-connect timer callback
+VOID CALLBACK AutoConnectTimerCb(PVOID lpParameter, BOOL TimerOrWaitFired)
+{
+	UNREFERENCED_PARAMETER(lpParameter);
+	UNREFERENCED_PARAMETER(TimerOrWaitFired);
+
+	// Don't try to connect if sync is already active or user disabled it
+	if (g_Synchronized || g_UserDisabledSync || !g_AutoConnectEnabled) {
+		return;
+	}
+
+	// Try to connect
+	HRESULT hRes = sync(NULL);
+	
+	if (SUCCEEDED(hRes)) {
+		_plugin_logprintf("[sync] Auto-connect successful\n");
+		// Stop the auto-connect timer as we're now connected
+		StopAutoConnect();
+	}
+	// If failed, timer will continue trying
+}
+
+
+// Start the auto-connect timer
+void StartAutoConnect()
+{
+	BOOL bRes;
+
+	// Don't start if already running or if sync is active
+	if (g_hAutoConnectTimer != INVALID_HANDLE_VALUE || g_Synchronized) {
+		return;
+	}
+
+#if VERBOSE >= 2
+	_plugin_logputs("[sync] Starting auto-connect timer\n");
+#endif
+
+	bRes = CreateTimerQueueTimer(&g_hAutoConnectTimer, NULL, 
+		(WAITORTIMERCALLBACK)AutoConnectTimerCb,
+		NULL, AUTO_CONNECT_RETRY_DELAY, AUTO_CONNECT_RETRY_DELAY, 
+		WT_EXECUTEINTIMERTHREAD);
+
+	if (!bRes) {
+		g_hAutoConnectTimer = INVALID_HANDLE_VALUE;
+		_plugin_logputs("[sync] StartAutoConnect: CreateTimerQueueTimer failed\n");
+	}
+}
+
+
+// Stop the auto-connect timer
+void StopAutoConnect()
+{
+	BOOL bRes = FALSE;
+	DWORD dwErr = 0;
+
+	if (g_hAutoConnectTimer == INVALID_HANDLE_VALUE) {
+		return;
+	}
+
+#if VERBOSE >= 2
+	_plugin_logputs("[sync] Stopping auto-connect timer\n");
+#endif
+
+	bRes = DeleteTimerQueueTimer(NULL, g_hAutoConnectTimer, NULL);
+	if (!bRes)
+	{
+		dwErr = GetLastError();
+		if (dwErr != ERROR_IO_PENDING) {
+			bRes = DeleteTimerQueueTimer(NULL, g_hAutoConnectTimer, NULL);
+			if (!bRes) {
+#if VERBOSE >= 2
+				_plugin_logputs("[sync] StopAutoConnect: DeleteTimerQueueTimer failed\n");
+#endif
+			}
+		}
+	}
+
+	g_hAutoConnectTimer = INVALID_HANDLE_VALUE;
+}
+
+
 // sync command implementation
 HRESULT sync(PSTR Args)
 {
@@ -525,16 +615,19 @@ HRESULT sync(PSTR Args)
 		goto Exit;
 	}
 
-	if (g_HyperSyncEnabled) {
-		hypersync();
-	}
-	else {
-		hypersyncoff();
+	// Enable HyperSync by default when connecting
+	if (g_EnableHyperSyncByDefault) {
+		g_HyperSyncEnabled = TRUE;
+		TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":true}\n");
+		_plugin_logputs("[sync] HyperSync mode enabled by default\n");
 	}
 
 	_plugin_logprintf("[sync] sync is now enabled with host %s\n", g_DefaultHost);
 	UpdateState();
 	CreatePollTimer();
+	
+	// Clear the user-disabled flag since we're now connected
+	g_UserDisabledSync = FALSE;
 
 Exit:
 	return hRes;
@@ -551,14 +644,21 @@ HRESULT syncoff()
 		return hRes;
 	}
 
+	// Mark that user explicitly disabled sync
+	g_UserDisabledSync = TRUE;
+
 	// Disable HyperSync if active
 	if (g_HyperSyncEnabled) {
-		hypersyncoff();
+		g_HyperSyncEnabled = FALSE;
+		TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":false}\n");
 	}
 
 	ReleasePollTimer();
 	hRes = TunnelClose();
 	_plugin_logputs("[sync] sync is now disabled\n");
+
+	// Stop auto-connect when user manually disables
+	StopAutoConnect();
 
 	return hRes;
 }
@@ -1100,7 +1200,6 @@ static bool cbSyncCommand(int argc, char* argv[])
 {
 	_plugin_logputs("[sync] sync command!");
 	sync(NULL);
-	if (g_EnableHyperSyncByDefault) hypersync();
 	return true;
 }
 
@@ -1108,7 +1207,6 @@ static bool cbSyncCommand(int argc, char* argv[])
 static bool cbSyncoffCommand(int argc, char* argv[])
 {
 	_plugin_logputs("[sync] syncoff command!");
-	if (g_EnableHyperSyncByDefault) hypersyncoff();
 	syncoff();
 	return true;
 }
@@ -1264,6 +1362,12 @@ static bool cbTranslateCommand(int argc, char* argv[])
 extern "C" __declspec(dllexport) void CBINITDEBUG(CBTYPE cbType, PLUG_CB_INITDEBUG* info)
 {
 	_plugin_logprintf("[sync] debugging of file %s started!\n", (const char*)info->szFileName);
+	
+	// Start auto-connect when debugging begins
+	if (g_AutoConnectEnabled && !g_UserDisabledSync) {
+		_plugin_logputs("[sync] Starting auto-connect...\n");
+		StartAutoConnect();
+	}
 }
 
 
@@ -1273,7 +1377,16 @@ extern "C" __declspec(dllexport) void CBSTOPDEBUG(CBTYPE cbType, PLUG_CB_STOPDEB
 #if VERBOSE >= 2
 	_plugin_logputs("[sync] debugging stopped!");
 #endif
-	syncoff();
+	
+	// Stop auto-connect when debugging stops
+	StopAutoConnect();
+	
+	// Disconnect if connected
+	if (g_Synchronized) {
+		syncoff();
+		// Reset user-disabled flag so auto-connect can work on next debug session
+		g_UserDisabledSync = FALSE;
+	}
 }
 
 
@@ -1322,6 +1435,8 @@ extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENT
 	switch (info->hEntry)
 	{
 	case MENU_ENABLE_SYNC:
+		// Clear the user-disabled flag when manually enabling
+		g_UserDisabledSync = FALSE;
 		cbSyncCommand(0, NULL);
 		break;
 
@@ -1399,6 +1514,9 @@ void coreInit(PLUG_INITSTRUCT* initStruct)
 	// initialize globals
 	g_Synchronized = FALSE;
 	g_HyperSyncEnabled = FALSE;
+	g_AutoConnectEnabled = TRUE;
+	g_UserDisabledSync = FALSE;
+	g_hAutoConnectTimer = INVALID_HANDLE_VALUE;
 
 	g_hPollCompleteEvent = CreateEvent(NULL, true, false, NULL);
 	if (g_hPollCompleteEvent == NULL)
@@ -1412,11 +1530,16 @@ void coreInit(PLUG_INITSTRUCT* initStruct)
 	if (SUCCEEDED(LoadConfigurationFile())) {
 		_plugin_logprintf("[sync] Configuration file loaded\n");
 	}
+	
+	_plugin_logputs("[sync] Auto-connect is enabled by default\n");
 }
 
 
 void coreStop()
 {
+	// Stop auto-connect timer
+	StopAutoConnect();
+	
 	// close tunnel and release objects
 	ReleasePollTimer();
 	TunnelClose();
