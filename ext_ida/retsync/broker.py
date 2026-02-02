@@ -186,6 +186,20 @@ class BrokerSrv():
         base = hash['base']
         rva = hash['rva']
         self.notice_dispatcher('rva', "\"modname\":\"%s\",\"base\":%d,\"rva\":%d,\"id\":\"idapro\"" % (modname, base, rva))
+        
+    def req_hyper_sync(self, s, hash):
+        """Forward hyper_sync enable/disable request to dispatcher"""
+        enabled = hash.get('enabled', False)
+        self.notice_dispatcher('hyper_sync', "\"enabled\":%s" % ('true' if enabled else 'false'))
+
+    def req_hyper_sync_request(self, s, hash):
+        """Forward hyper_sync state request to dispatcher"""
+        self.notice_dispatcher('hyper_sync_request', "")
+
+    def req_hyper_sync_state(self, s, hash):
+        """Forward hyper_sync state response from IDA to debugger"""
+        enabled = hash.get('enabled', False)
+        self.notice_dispatcher("hyper_sync_state", "\"enabled\":%s" % ('true' if enabled else 'false')) 
 
     def parse_exec(self, s, req):
         if not (req[0:8] == '[notice]'):
@@ -266,7 +280,10 @@ class BrokerSrv():
             'cmd': self.req_cmd,
             'kill': self.req_kill,
             'beacon': self.req_beacon,
-            'rva': self.req_rva
+            'rva': self.req_rva,
+            'hyper_sync': self.req_hyper_sync,
+            'hyper_sync_request': self.req_hyper_sync_request,
+            'hyper_sync_state': self.req_hyper_sync_state
         }
 
 

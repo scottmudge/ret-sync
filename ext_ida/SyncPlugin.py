@@ -754,7 +754,7 @@ class RequestHandler(object):
     # HyperSync: Handle enable/disable request from x64dbg
     def req_hyper_sync(self, hash):
         """
-        Handle HyperSync state change from debugger.
+        Handle HyperSync enable/disable request from debugger.
         
         Args:
             hash: Dictionary with 'enabled' boolean field
@@ -762,10 +762,16 @@ class RequestHandler(object):
         enabled = hash.get('enabled', False)
         
         if enabled:
+            # Check if already enabled
+            if self.hypersync_enabled:
+                rs_debug("HyperSync already enabled")
+                # Send confirmation anyway
+                self.send_hypersync_state()
+                return
+                
             rs_log("enabling HyperSync mode")
             self.hypersync_enabled = True
             
-            # Create and install cursor hook if not already done
             if not self.cursor_hook:
                 self.cursor_hook = CursorHook(self)
                 self.cursor_hook.hook()
@@ -773,11 +779,52 @@ class RequestHandler(object):
             self.cursor_hook.enable_hypersync()
             
         else:
+            # Check if already disabled
+            if not self.hypersync_enabled:
+                rs_debug("HyperSync already disabled")
+                # Send confirmation anyway
+                self.send_hypersync_state()
+                return
+                
             rs_log("disabling HyperSync mode")
             self.hypersync_enabled = False
             
             if self.cursor_hook:
                 self.cursor_hook.disable_hypersync()
+        
+        # Send state confirmation back to debugger
+        self.send_hypersync_state()
+
+    def req_hyper_sync_request(self, hash):
+        """
+        Handle HyperSync state request from debugger.
+        Responds with current HyperSync state.
+        
+        Args:
+            hash: Request dictionary (no parameters needed)
+        """
+        rs_debug("Received HyperSync state request from debugger")
+        self.send_hypersync_state()
+
+    def send_hypersync_state(self):
+        """
+        Send current HyperSync state back to debugger.
+        """
+        if not self.broker_sock:
+            return
+        
+        state_msg = "[notice]{\"type\":\"hyper_sync_state\",\"enabled\":%s}\n" % (
+            'true' if self.hypersync_enabled else 'false'
+        )
+        
+        try:
+            self.broker_sock.sendall(rs_encode(state_msg))
+            rs_debug("Sent HyperSync state: %s" % ('enabled' if self.hypersync_enabled else 'disabled'))
+        except socket.error as e:
+            rs_log("Failed to send HyperSync state: %s" % e)
+            
+    def null_op(self, hash):
+        return
     
     # HyperSync: Handle RVA (selection) message from x64dbg
     def req_rva(self, hash):
@@ -911,7 +958,9 @@ class RequestHandler(object):
             'modcheck': self.req_modcheck,
             'dialect': self.req_set_dbg_dialect,
             'hyper_sync': self.req_hyper_sync,
-            'rva': self.req_rva
+            'rva': self.req_rva,
+            'hyper_sync_request': self.req_hyper_sync_request,
+            'hyper_sync_state': self.null_op
         }
         self.prev_req = ""  # used as a cache if json is not completely received
 

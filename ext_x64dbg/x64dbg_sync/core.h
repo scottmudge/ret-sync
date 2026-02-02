@@ -38,7 +38,7 @@ enum MENU_IDENTIFIERS {
 };
 
 //functions
-HRESULT sync(PSTR Args);
+HRESULT sync(PSTR Args, const bool do_log = false);
 HRESULT syncoff();
 HRESULT syncmodauto(PSTR Args);
 HRESULT synchelp();

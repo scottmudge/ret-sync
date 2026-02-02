@@ -152,7 +152,7 @@ HRESULT TunnelIsUp()
 
 
 HRESULT
-TunnelCreate(PCSTR Host, PCSTR Port)
+TunnelCreate(PCSTR Host, PCSTR Port, const bool do_log)
 {
     HRESULT hRes = E_FAIL;
     struct addrinfo *result = NULL, *ptr = NULL, hints;
@@ -228,7 +228,7 @@ TunnelCreate(PCSTR Host, PCSTR Port)
         if (iResult == SOCKET_ERROR) {
             closesocket(g_Sock);
             g_Sock = INVALID_SOCKET;
-            _plugin_logprintf("[sync] connect failed (check if IDA/Ghidra plugin is running)\n");
+            if (do_log) _plugin_logprintf("[sync] connect failed (check if IDA/Ghidra plugin is running)\n");
             continue;
         }
 

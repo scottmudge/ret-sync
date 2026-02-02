@@ -274,9 +274,10 @@ PollCmd()
 				try {
 					// Parse JSON
 					nlohmann::json j = nlohmann::json::parse(json_start);
+					std::string msg_type = j.value("type", "");
 					
 					// Check if this is an RVA message
-					if (j.contains("type") && j["type"] == "rva") {
+					if (msg_type == "rva") {
 						// Check if message is from IDA Pro (ignore our own messages)
 						std::string source_id = j.value("id", "");
 						if (source_id == "idapro") {
@@ -305,9 +306,37 @@ PollCmd()
 							_plugin_logprintf("[sync] Ignoring RVA from source: %s\n", source_id.c_str());
 						}
 					}
+					// Check if this is a HyperSync state response from IDA
+					else if (msg_type == "hyper_sync_state") {
+						bool ida_enabled = j.value("enabled", false);
+						
+#if VERBOSE >= 2
+						_plugin_logprintf("[sync] Received HyperSync state from IDA: %s\n", 
+							ida_enabled ? "enabled" : "disabled");
+#endif
+						
+						// Check if IDA's state matches what we want
+						if (g_EnableHyperSyncByDefault && !ida_enabled) {
+							// We want it enabled but IDA reports disabled - send enable request
+							_plugin_logputs("[sync] HyperSync mismatch: requesting enable\n");
+							TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":true}\n");
+						}
+						else if (!g_EnableHyperSyncByDefault && ida_enabled) {
+							// We want it disabled but IDA reports enabled - send disable request
+							_plugin_logputs("[sync] HyperSync mismatch: requesting disable\n");
+							TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":false}\n");
+						}
+						else {
+							// States match
+							g_HyperSyncEnabled = ida_enabled;
+#if VERBOSE >= 2
+							_plugin_logprintf("[sync] HyperSync state confirmed: %s\n", 
+								ida_enabled ? "enabled" : "disabled");
+#endif
+						}
+					}
 					else {
-						_plugin_logprintf("[sync] Unknown JSON message type: %s\n", 
-							j.value("type", "unknown").c_str());
+						_plugin_logprintf("[sync] Unknown JSON message type: %s\n", msg_type.c_str());
 					}
 				}
 				catch (nlohmann::json::parse_error& e) {
@@ -442,7 +471,7 @@ CALLBACK SyncTimerCb(PVOID lpParameter, BOOL TimerOrWaitFired)
 	UNREFERENCED_PARAMETER(lpParameter);
 	UNREFERENCED_PARAMETER(TimerOrWaitFired);
 
-	_plugin_logputs("[sync] detecting possible connect timeout\n");
+	//_plugin_logputs("[sync] detecting possible connect timeout\n");
 }
 
 
@@ -577,7 +606,7 @@ void StopAutoConnect()
 
 
 // sync command implementation
-HRESULT sync(PSTR Args)
+HRESULT sync(PSTR Args, const bool do_log)
 {
 	HRESULT hRes = S_OK;
 
@@ -587,26 +616,26 @@ HRESULT sync(PSTR Args)
 
 	if (g_Synchronized)
 	{
-		_plugin_logputs("[sync] sync update\n");
+		if (do_log) _plugin_logputs("[sync] sync update\n");
 		UpdateState();
 		goto Exit;
 	}
 
-	_plugin_logprintf("[sync] attempting to connect to %s:%s\n", g_DefaultHost, g_DefaultPort);
+	if (do_log) _plugin_logprintf("[sync] attempting to connect to %s:%s\n", g_DefaultHost, g_DefaultPort);
 
 	CreateSyncTimer();
 
-	hRes = TunnelCreate(g_DefaultHost, g_DefaultPort);
+	hRes = TunnelCreate(g_DefaultHost, g_DefaultPort, do_log);
 	if (FAILED(hRes))
 	{
-		_plugin_logputs("[sync] sync failed\n");
+		if (do_log) _plugin_logputs("[sync] sync failed\n");
 		ReleaseSyncTimer();
 		goto Exit;
 	}
 
 	ReleaseSyncTimer();
 
-	_plugin_logputs("[sync] probing connection\n");
+	if (do_log) _plugin_logputs("[sync] probing connection\n");
 
 	hRes = TunnelSend("[notice]{\"type\":\"new_dbg\",\"msg\":\"dbg connect - x64_dbg\",\"dialect\":\"x64_dbg\"}\n");
 	if (FAILED(hRes))
@@ -615,16 +644,17 @@ HRESULT sync(PSTR Args)
 		goto Exit;
 	}
 
-	// Enable HyperSync by default when connecting
-	if (g_EnableHyperSyncByDefault) {
-		g_HyperSyncEnabled = TRUE;
-		TunnelSend("[sync]{\"type\":\"hyper_sync\",\"enabled\":true}\n");
-		_plugin_logputs("[sync] HyperSync mode enabled by default\n");
-	}
-
 	_plugin_logprintf("[sync] sync is now enabled with host %s\n", g_DefaultHost);
 	UpdateState();
 	CreatePollTimer();
+	
+	// Request HyperSync state from IDA to sync up
+	// IDA will respond with hyper_sync_state message, and we'll verify/correct
+	if (g_EnableHyperSyncByDefault) {
+		Sleep(1000);  // Small delay to ensure IDB is enabled
+		_plugin_logputs("[sync] Requesting HyperSync state from IDA\n");
+		TunnelSend("[sync]{\"type\":\"hyper_sync_request\"}\n");
+	}
 	
 	// Clear the user-disabled flag since we're now connected
 	g_UserDisabledSync = FALSE;

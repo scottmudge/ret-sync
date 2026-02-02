@@ -26,7 +26,7 @@ extern BOOL g_Synchronized;
 
 HRESULT TunnelIsUp();
 
-HRESULT TunnelCreate(PCSTR Host, PCSTR Port);
+HRESULT TunnelCreate(PCSTR Host, PCSTR Port, const bool do_log = false);
 
 HRESULT TunnelClose();
 

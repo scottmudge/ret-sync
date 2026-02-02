@@ -94,11 +94,44 @@ class DispatcherSrv():
             'cmd': self.req_cmd,
             'bc': self.req_bc,
             'kill': self.req_kill,
-            'rva': self.req_rva
+            'rva': self.req_rva,
+            'hyper_sync': self.req_hyper_sync,
+            'hyper_sync_request': self.req_hyper_sync_request,
+            'hyper_sync_state': self.req_hyper_sync_state
         }
         
     def req_rva(self, s, hash):
         """Forward RVA message to debugger client"""
+        msg = "[sync]%s\n" % json.dumps(hash)
+        if not self.current_dbg:
+            return
+        try:
+            self.current_dbg.client_sock.sendall(rs_encode(msg))
+        except socket.error:
+            pass
+        
+    def req_hyper_sync(self, s, hash):
+        """Forward hyper_sync enable/disable request to active IDA client"""
+        msg = "[sync]%s\n" % json.dumps(hash)
+        if not self.current_idb or not self.current_idb.enabled:
+            return
+        try:
+            self.current_idb.client_sock.sendall(rs_encode(msg))
+        except socket.error:
+            pass
+
+    def req_hyper_sync_request(self, s, hash):
+        """Forward hyper_sync state request to active IDA client"""
+        msg = "[sync]%s\n" % json.dumps(hash)
+        if not self.current_idb or not self.current_idb.enabled:
+            return
+        try:
+            self.current_idb.client_sock.sendall(rs_encode(msg))
+        except socket.error:
+            pass
+
+    def req_hyper_sync_state(self, s, hash):
+        """Forward hyper_sync state response from IDA to debugger"""
         msg = "[sync]%s\n" % json.dumps(hash)
         if not self.current_dbg:
             return
