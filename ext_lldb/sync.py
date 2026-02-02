@@ -49,7 +49,7 @@ except ImportError:
 
 
 HOST = "localhost"
-PORT = 9100
+PORT = 9190
 TIMER_PERIOD = 0.1
 
 if __name__ == "__main__":

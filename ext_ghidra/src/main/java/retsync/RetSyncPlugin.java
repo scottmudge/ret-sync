@@ -111,7 +111,7 @@ public class RetSyncPlugin extends ProgramPlugin {
     protected static final boolean DEBUG_MODULES = false;
     private static final String CONF_INI_FILE = ".sync";
     protected final String SYNC_HOST_DEFAULT = "localhost";
-    protected final int SYNC_PORT_DEFAULT = 9100;
+    protected final int SYNC_PORT_DEFAULT = 9190;
 
     // dynamic configuration
     protected String SYNC_HOST = SYNC_HOST_DEFAULT;

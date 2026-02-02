@@ -46,7 +46,7 @@ except ImportError:
 
 # default values
 HOST = "localhost"
-PORT = 9100
+PORT = 9190
 USE_TMP_LOGGING_FILE = True
 TIMER_PERIOD = 0.1
 PYTHON_MAJOR = sys.version_info[0]

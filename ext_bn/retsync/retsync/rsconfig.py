@@ -42,7 +42,7 @@ except ImportError:
 
 # networking settings
 HOST = 'localhost'
-PORT = 9100
+PORT = 9190
 
 CB_TRACE_COLOR = HighlightColor(HighlightStandardColor.GreenHighlightColor, alpha=192)
 

@@ -46,7 +46,7 @@ HWND             hwmain;               // Handle of main OllyDbg window
 
 // Default host value is locahost
 static CHAR *g_DefaultHost = "127.0.0.1";
-static CHAR *g_DefaultPort = "9100";
+static CHAR *g_DefaultPort = "9190";
 BOOL g_ExtConfFile = 0;
 
 // Buffer used to solve symbol's name
@@ -95,7 +95,7 @@ HRESULT LoadConfigurationFile()
 	if ((count == 0) | (count == (MAX_PATH - 1)) | (count == (MAX_PATH - 2)))
 		goto failed;
 
-	count = GetPrivateProfileStringA("INTERFACE", "port", "9100", lpConfPort, MAX_PATH, lpProfile);
+	count = GetPrivateProfileStringA("INTERFACE", "port", "9190", lpConfPort, MAX_PATH, lpProfile);
 	if ((count == 0) | (count == (MAX_PATH - 1)) | (count == (MAX_PATH - 2)))
 		goto failed;
 

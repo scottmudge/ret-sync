@@ -590,9 +590,9 @@ class SyncPlugin(UIContextNotification):
             rs_log('error while switching tabs')
 
     def trigger_action(self, action: str):
-        handler = UIActionHandler().actionHandlerFromWidget(
-            DockHandler.getActiveDockHandler().parent())
-        handler.executeAction(action)
+        if self.widget:
+            handler = Action.actionHandlerFromWidget(self.widget)
+            handler.executeAction(action)
 
     # check if address is within a valid segment
     def is_safe(self, offset):

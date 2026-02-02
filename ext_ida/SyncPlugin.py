@@ -1480,6 +1480,8 @@ class RetSyncPlugin(idaapi.plugin_t):
     SyncForm = None
 
     def init(self):
+        if idaapi.get_root_filename():
+            self.run(None)
         return idaapi.PLUGIN_KEEP
 
     def term(self):

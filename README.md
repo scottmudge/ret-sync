@@ -421,7 +421,7 @@ One example is to put it here:
 
 ```
       0:000> !sync
-      [sync] No argument found, using default host (127.0.0.1:9100)
+      [sync] No argument found, using default host (127.0.0.1:9190)
       [sync] sync success, sock 0x5a8
       [sync] probing sync
       [sync] sync is now enabled with host 127.0.0.1
@@ -478,7 +478,7 @@ directory, one can rename the ``x86`` file `sync32.dll`.
 
 ```
     gdb> source sync.py
-    [sync] configuration file loaded 192.168.52.1:9100
+    [sync] configuration file loaded 192.168.52.1:9190
     [sync] commands added
 ```
 
@@ -1089,7 +1089,7 @@ With IDA:
 
 Conflict(s):
 
-- Logitech Updater software is known to use the same default port (9100). A solution
+- Logitech Updater software is known to use the same default port (9190). A solution
   is to use a global `.sync` configuration file to define a different port.
 
 ```
